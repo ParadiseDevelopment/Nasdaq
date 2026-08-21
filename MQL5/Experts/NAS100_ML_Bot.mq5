@@ -76,7 +76,7 @@ input group "=== Risk ==="
 input double          InpRiskPercent      = 0.50;         // Risk per trade (% of equity)
 input double          InpMaxDailyLossPct  = 3.0;          // Daily loss stop (%)
 input double          InpMaxDrawdownPct   = 15.0;         // Kill switch drawdown (%)
-input double          InpMaxSpreadPoints  = 80.0;         // Max spread (points)
+input double          InpMaxSpreadPoints  = 400.0;        // Max spread (points) - CHECK YOURS
 input double          InpMaxSpreadAtrFrac = 0.15;         // Max spread as fraction of ATR
 input int             InpMaxTradesPerDay  = 8;            // Max entries per day
 input int             InpLossStreakTrigger= 3;            // Losses in a row before cooldown

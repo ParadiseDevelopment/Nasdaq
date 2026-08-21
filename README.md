@@ -67,8 +67,13 @@ when the regime turns. The live weights are visible on the chart panel.
 * **Causal by construction.** Features come from closed bars only; the
   standardiser only ever folds in samples whose label has already matured.
 * **Honest scoring.** Every new sample is graded *before* it is learned from,
-  so the rolling accuracy on the panel is a genuine walk-forward number — and
-  the EA refuses to trade when it drops below `InpMinRollAccuracy`.
+  so the rolling accuracy on the panel is genuinely out-of-sample in time —
+  and the EA refuses to trade when it drops below `InpMinRollAccuracy`.
+  **But read the caveat below**: because a sample is opened on every bar and
+  each label takes `InpLabelHorizon` bars to resolve, consecutive samples
+  overlap heavily and that accuracy overstates the edge a sequence of
+  non-overlapping trades actually realises. On a year of real NAS100 M15 the
+  gap was 0.63 label accuracy versus a ~51% realised win rate.
 * **Class-balanced replay.** A bounded replay buffer gives several effective
   epochs over a rolling window while half the draws target the minority class,
   so a long trend cannot bake in a permanent directional prior.
@@ -184,6 +189,57 @@ walk-forward accuracy against the majority-class baseline. **If it does not
 beat that baseline out of sample, the feature set has no edge on your data —
 do not trade the checkpoint.** That check is the most valuable thing in this
 repository.
+
+---
+
+## Measured result on a year of real NAS100 M15
+
+Broker feed `NAS100.s`, M15, 23,684 bars, 2025-08-21 → 2026-08-21, replayed
+through `tools/backtest.py` with the terminal's own recorded spread
+(median 2.3 index points) and no commission:
+
+| Configuration | Return | Trades | Win rate | PF |
+|---|---|---|---|---|
+| Shipped defaults | **−8.3%** | 189 | 42.9% | 0.86 |
+| Drawdown kill switch disabled | **−32.1%** | 1,498 | 44.4% | 0.91 |
+| Trade geometry matched to the label, no gates | −38.8% | 3,438 | 50.9% | 0.94 |
+| …the same run with spread forced to zero | **+55.2%** | 3,494 | 51.3% | 1.06 |
+
+Buy and hold over the same window: **+26.3%**.
+
+The −8.3% is not a full year of trading — the drawdown kill switch fired in
+October 2025 and the EA sat flat for the remaining ten months. That is the
+kill switch doing its job, not a strategy that lost slowly.
+
+Three things this measurement establishes:
+
+1. **The spread is the whole story.** The identical configuration returns
+   +55.2% at zero spread and −38.8% at the real 2.3-point spread. At a
+   1.2 ATR stop on M15, one round trip costs ~5% of the money risked, and the
+   model's edge is not big enough to clear it. Anything that widens the
+   barriers, lengthens the horizon or moves to a higher timeframe attacks this
+   directly; tuning the model does not.
+2. **Label accuracy overstates tradeable edge.** The ensemble genuinely
+   separates the classes — 64.5% directional accuracy in the trade zone, well
+   calibrated (p > 0.62 → 69% realised) — yet non-overlapping trades win only
+   ~51%. A sample opens every bar and takes 12 bars to resolve, so consecutive
+   labels share almost all of their outcome. Treat `InpMinRollAccuracy` as a
+   degradation alarm, not as evidence of profitability.
+3. **The shipped exit geometry did not match the label.** Defaults predicted a
+   1.2 ATR move while risking 1.5 ATR to win 2.4 ATR. Aligning them did not
+   rescue the result, but the mismatch should not have been there.
+
+Reproduce it:
+
+```bash
+python3 tools/backtest.py --bars NAS100.s_M15.csv --deposit 10000 \
+  --ny-start 16 --ny-end 23 --london-start 10 --london-end 18 \
+  --trade-start 10 --trade-end 23
+```
+
+Session hours above are for a GMT+3 broker, derived from that feed: bar range
+and tick volume both roughly double at server hour 16, which is the New York
+cash open. Derive yours the same way before trusting any result.
 
 ---
 

@@ -700,36 +700,61 @@ def report(bt: Backtest, cfg, df):
 
 # ======================================================================
 def load_bars(path, spec_overrides):
-    spec = {"point": 0.01, "tick_value": 1.0, "tick_size": 0.01,
+    """Read either ExportBars.mq5 output or MetaTrader's own bar export.
+
+    MT5's chart "Save as" writes a tab-separated file whose header is
+    <DATE>\t<TIME>\t<OPEN>\t...\t<SPREAD> and which carries no contract
+    spec, so tick_value / tick_size have to be supplied or defaulted.
+    """
+    spec = {"point": 0.01, "tick_value": 0.01, "tick_size": 0.01,
             "volume_min": 0.01, "volume_step": 0.01, "volume_max": 100.0,
             "symbol": "?", "timeframe": "?"}
 
     with open(path, "r", encoding="ascii", errors="replace") as fh:
         first = fh.readline()
-    skip = 0
-    if first.startswith("#"):
-        skip = 1
-        for tok in first[1:].split():
-            if "=" in tok:
-                k, v = tok.split("=", 1)
-                if k in ("symbol", "timeframe"):
-                    spec[k] = v
-                elif k in spec:
-                    try:
-                        spec[k] = float(v)
-                    except ValueError:
-                        pass
+
+    if first.lstrip().startswith("<DATE>"):
+        #--- MetaTrader native export
+        df = pd.read_csv(path, sep="\t")
+        df.columns = [c.strip().strip("<>").lower() for c in df.columns]
+        df["time"] = pd.to_datetime(df["date"] + " " + df["time"],
+                                    format="%Y.%m.%d %H:%M:%S")
+        df = df.rename(columns={"tickvol": "tick_volume"})
+        df = df.set_index("time").sort_index()
+        stem = os.path.basename(path)
+        if "_" in stem:
+            bits = stem.split("_")
+            spec["symbol"] = bits[0].split("-")[-1]
+            if len(bits) > 1:
+                spec["timeframe"] = bits[1]
+    else:
+        skip = 0
+        if first.startswith("#"):
+            skip = 1
+            for tok in first[1:].split():
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    if k in ("symbol", "timeframe"):
+                        spec[k] = v
+                    elif k in spec:
+                        try:
+                            spec[k] = float(v)
+                        except ValueError:
+                            pass
+        df = pd.read_csv(path, skiprows=skip)
+        df.columns = [c.strip().lower() for c in df.columns]
+        df["time"] = pd.to_datetime(df["time"], format="mixed", dayfirst=False)
+        df = df.set_index("time").sort_index()
 
     spec.update({k: v for k, v in spec_overrides.items() if v is not None})
 
-    df = pd.read_csv(path, skiprows=skip)
-    df.columns = [c.strip().lower() for c in df.columns]
-    df["time"] = pd.to_datetime(df["time"], format="mixed", dayfirst=False)
-    df = df.set_index("time").sort_index()
+    keep = ["open", "high", "low", "close"]
+    df = df[keep + [c for c in ("tick_volume", "spread") if c in df.columns]].copy()
     if "spread" not in df:
         df["spread"] = 0.0
     if "tick_volume" not in df:
         df["tick_volume"] = 1.0
+    df = df[np.isfinite(df[keep]).all(axis=1)]
     return df, spec
 
 
@@ -776,7 +801,7 @@ def main():
     p.add_argument("--risk-percent", type=float, default=0.50)
     p.add_argument("--max-daily-loss-pct", type=float, default=3.0)
     p.add_argument("--max-drawdown-pct", type=float, default=15.0)
-    p.add_argument("--max-spread-points", type=float, default=80.0)
+    p.add_argument("--max-spread-points", type=float, default=400.0)
     p.add_argument("--max-spread-atr-frac", type=float, default=0.15)
     p.add_argument("--max-trades-per-day", type=int, default=8)
     p.add_argument("--loss-streak-trigger", type=int, default=3)
