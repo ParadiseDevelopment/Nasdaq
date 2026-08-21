@@ -1,3 +1,18 @@
+# NAS100 Trading Bots
+
+Two Expert Advisors for the NASDAQ 100 CFD, and the tooling that measured both.
+
+| Bot | Verdict on a year of real NAS100.s M15 |
+|---|---|
+| **[NAS100_Overnight](docs/OVERNIGHT.md)** — long overnight, flat by the cash open | **works, swap permitting**: +4.1% at 0.5% risk / night, 2.7% max drawdown, PF 1.21 |
+| **NAS100_ML_Bot** — online-learning ensemble (below) | **does not work**: −32% over the year; its features carry no measurable signal |
+
+Read `docs/OVERNIGHT.md` first. The ML bot is documented below and kept because
+the research tooling around it — `tools/edge_test.py` in particular — is what
+established that it does not work, and what found the strategy that does.
+
+---
+
 # NAS100 ML Bot
 
 A machine-learning Expert Advisor for the NASDAQ 100 CFD (`NAS100`, `US100`,
@@ -109,7 +124,8 @@ bar-count time stop.
 ```
 MQL5/
   Experts/
-    NAS100_ML_Bot.mq5          the EA - inputs, per-bar pipeline, panel
+    NAS100_Overnight.mq5       the working bot - clock-driven, no ML
+    NAS100_ML_Bot.mq5          the ML EA - inputs, per-bar pipeline, panel
   Include/NAS100ML/
     Utils.mqh                  math helpers, AdamW, ring statistics
     FeatureEngine.mqh          40 ATR-normalised features from closed bars
@@ -124,11 +140,13 @@ MQL5/
   Scripts/
     ExportBars.mq5             dump chart bars to CSV for the replica
 tools/
-  backtest.py                  bar-replay backtest - faithful Python replica
+  backtest_overnight.py        backtest for the overnight bot
+  backtest.py                  bar-replay backtest - faithful ML replica
   train_offline.py             optional numpy pre-trainer (same layouts)
   verify_checkpoint.py         validate a checkpoint before loading it
   edge_test.py                 is there any signal? non-overlapping OOS test
 docs/
+  OVERNIGHT.md                 the working bot: evidence, swap, limits
   INSTALL.md                   install, sessions, parameters, troubleshooting
   BACKTESTING.md               both backtest routes and how to read them
 ```

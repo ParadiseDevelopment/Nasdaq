@@ -105,17 +105,20 @@ public:
       //--- respect the broker's minimum stop distance
       double point   = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
       double stopLvl = (double)SymbolInfoInteger(m_symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+      //--- push the levels out to the broker's minimum distance, but leave a
+      //--- level of 0 alone: 0 means "no stop"/"no target", and clamping it
+      //--- would silently attach one the caller never asked for
       if(stopLvl > 0.0)
         {
          if(isLong)
            {
-            sl = MathMin(sl, NormalizeDouble(price - stopLvl, digits));
-            tp = MathMax(tp, NormalizeDouble(price + stopLvl, digits));
+            if(sl > 0.0) sl = MathMin(sl, NormalizeDouble(price - stopLvl, digits));
+            if(tp > 0.0) tp = MathMax(tp, NormalizeDouble(price + stopLvl, digits));
            }
          else
            {
-            sl = MathMax(sl, NormalizeDouble(price + stopLvl, digits));
-            tp = MathMin(tp, NormalizeDouble(price - stopLvl, digits));
+            if(sl > 0.0) sl = MathMax(sl, NormalizeDouble(price + stopLvl, digits));
+            if(tp > 0.0) tp = MathMin(tp, NormalizeDouble(price - stopLvl, digits));
            }
         }
 
