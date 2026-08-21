@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+
+# MetaTrader build output and local model artefacts
+*.ex5
+MQL5/Files/
+dataset.csv
+model.txt
