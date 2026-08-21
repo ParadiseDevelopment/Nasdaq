@@ -115,11 +115,15 @@ MQL5/
     RiskManager.mqh            sizing and every pre-trade gate
     TradeExecutor.mqh          orders, break-even, ATR trailing, deal polling
     Persistence.mqh            checkpoint I/O + CSV dataset export
+  Scripts/
+    ExportBars.mq5             dump chart bars to CSV for the replica
 tools/
+  backtest.py                  bar-replay backtest - faithful Python replica
   train_offline.py             optional numpy pre-trainer (same layouts)
   verify_checkpoint.py         validate a checkpoint before loading it
 docs/
-  INSTALL.md                   install, backtest, tune, troubleshoot
+  INSTALL.md                   install, sessions, parameters, troubleshooting
+  BACKTESTING.md               both backtest routes and how to read them
 ```
 
 ---
@@ -130,7 +134,10 @@ docs/
    folder into your terminal's data folder (File → Open Data Folder).
 2. Compile `NAS100_ML_Bot.mq5` in MetaEditor (F7).
 3. Backtest on your broker's NAS100 symbol, M15, **"Every tick based on real
-   ticks"**, over at least 2 years.
+   ticks"**, over at least 2 years. For a first answer in under a minute,
+   export bars with `MQL5/Scripts/ExportBars.mq5` and run
+   `python3 tools/backtest.py --bars bars.csv` instead — see
+   `docs/BACKTESTING.md`.
 4. Read `docs/INSTALL.md` before doing anything with real money — in
    particular the section on setting the session hours for *your* broker's
    server time, which the defaults will almost certainly get wrong.
@@ -140,6 +147,27 @@ watches and learns but does not trade. On M15 that is roughly three weeks of
 bars.
 
 ---
+
+## Getting a number
+
+```bash
+# in MT5: run Scripts/ExportBars.mq5 on a NAS100 M15 chart
+python3 tools/backtest.py --bars bars.csv --deposit 10000 --commission 4.0
+```
+
+`tools/backtest.py` replays the exact same pipeline on OHLC bars and reports
+return, drawdown, trade statistics and — the line that matters most — the
+ensemble's walk-forward accuracy **against the majority-class baseline**:
+
+```
+walk-forward accuracy : 0.6033  (last 300) over 24,791 scored samples
+majority baseline     : 0.6367   ->  EDGE -0.0333   <-- no edge; ...
+```
+
+Accuracy on its own is a trap: a model that has learned nothing but the base
+rate will report 0.60 and lose money. If EDGE is not clearly positive, the
+return underneath it is noise. `docs/BACKTESTING.md` covers both routes and
+what the bar replay cannot model.
 
 ## The offline trainer is optional
 
