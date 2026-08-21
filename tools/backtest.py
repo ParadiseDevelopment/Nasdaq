@@ -611,19 +611,35 @@ def report(bt: Backtest, cfg, df):
     tr = pd.DataFrame(bt.trades)
     eq = pd.DataFrame(bt.equity_curve, columns=["time", "equity"]).set_index("time")
 
+    #--- --report-from replays the whole file but scores only a tail window,
+    #--- so the model is already warmed up and adapted at the window's start.
+    #--- That is the "I have been running this for a while" question, which is
+    #--- a different one from starting the bot cold on a short history.
+    base = cfg.deposit
+    window_note = ""
+    if getattr(cfg, "report_from", None):
+        rf = pd.Timestamp(cfg.report_from)
+        if not tr.empty:
+            base = cfg.deposit + tr[tr.close_time < rf].profit.sum()
+            tr = tr[tr.close_time >= rf].reset_index(drop=True)
+        eq = eq[eq.index >= rf]
+        df = df[df.index >= rf]
+        window_note = f" (reporting from {rf:%Y-%m-%d}, warmed up on prior data)"
+
     print("=" * 72)
     print("NAS100 ML Bot - bar-replay backtest (Python replica, NOT MT5)")
     print("=" * 72)
     print(f"symbol / timeframe : {bt.spec.get('symbol','?')} {bt.spec.get('timeframe','?')}")
-    print(f"period             : {df.index[0]}  ->  {df.index[-1]}")
+    print(f"period             : {df.index[0]}  ->  {df.index[-1]}{window_note}")
     print(f"bars               : {len(df):,}")
-    print(f"deposit            : {cfg.deposit:,.2f}")
+    print(f"starting equity    : {base:,.2f}")
     print(f"commission         : {cfg.commission:.2f} per lot per round turn")
     print(f"ambiguous bars     : resolved as {cfg.ambiguous_bar.upper()} first")
     print()
 
     if tr.empty:
-        print("NO TRADES were taken.")
+        print("NO TRADES were taken in the reported window."
+              if window_note else "NO TRADES were taken.")
         print()
         print("Why the EA stood aside (gate hit counts per bar):")
         for k, v in sorted(bt.blocks.items(), key=lambda kv: -kv[1]):
@@ -634,8 +650,8 @@ def report(bt: Backtest, cfg, df):
               f"(edge {acc - base:+.4f}) over {bt.ens.seen:,} scored samples")
         return
 
-    final = bt.balance
-    ret_pct = (final / cfg.deposit - 1.0) * 100.0
+    final = base + tr.profit.sum()
+    ret_pct = (final / base - 1.0) * 100.0
     wins = tr[tr.profit > 0]
     losses = tr[tr.profit <= 0]
     gross_win = wins.profit.sum()
@@ -646,13 +662,13 @@ def report(bt: Backtest, cfg, df):
     max_dd = dd.max()
 
     days = max((df.index[-1] - df.index[0]).days, 1)
-    cagr = ((final / cfg.deposit) ** (365.0 / days) - 1.0) * 100.0
+    cagr = ((final / base) ** (365.0 / days) - 1.0) * 100.0
 
     daily = eq.equity.resample("1D").last().dropna()
     dret = daily.pct_change().dropna()
     sharpe = (dret.mean() / dret.std() * np.sqrt(252)) if len(dret) > 5 and dret.std() > 0 else float("nan")
 
-    print(f"RETURN             : {ret_pct:+.2f}%   ({cfg.deposit:,.2f} -> {final:,.2f})")
+    print(f"RETURN             : {ret_pct:+.2f}%   ({base:,.2f} -> {final:,.2f})")
     print(f"annualised         : {cagr:+.2f}%")
     print(f"max drawdown       : {max_dd:.2f}%")
     print(f"Sharpe (daily)     : {sharpe:.2f}")
@@ -764,6 +780,9 @@ def main():
     p.add_argument("--bars", required=True, help="CSV from MQL5/Scripts/ExportBars.mq5")
     p.add_argument("--from", dest="dt_from", default=None)
     p.add_argument("--to", dest="dt_to", default=None)
+    p.add_argument("--report-from", dest="report_from", default=None,
+                   help="replay everything but report only from this date, so the "
+                        "model enters the window already trained")
     p.add_argument("--deposit", type=float, default=10000.0)
     p.add_argument("--commission", type=float, default=0.0,
                    help="account currency per lot per round turn")

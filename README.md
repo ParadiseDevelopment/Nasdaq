@@ -239,6 +239,46 @@ Split the year in half and both halves lose at zero spread (−0.036 R then
    returns it to −0.032 R. A sign that moves with unrelated settings is noise,
    not signal.
 
+### Three months is too short to measure anything here
+
+Asked for the most recent quarter (2026-05-21 → 2026-08-21), the answer
+depends entirely on which question is meant:
+
+| Question | Result |
+|---|---|
+| "I've had it running since last August" | **0.00%** — zero trades; the kill switch halted it in October 2025 |
+| Same, kill switch disabled | **−12.07%** over 382 trades |
+| "I installed it three months ago" (cold start) | **+4.72%** over 338 trades |
+
+The warmed-up and cold-start runs cover the *identical* three months with
+identical parameters. They differ by 17 percentage points, and their long/short
+splits nearly invert (155/227 versus 214/124), purely because the online model
+entered the window in a different state.
+
+Worse, that +4.72% is not reproducible. Changing only the RNG seed — which
+sets the random Fourier projection and the MLP's initial weights, and has
+nothing to do with the market — gives:
+
+```
+seed 20240517  +4.72%     seed 1  −1.77%     seed 2  +10.12%
+seed 3         +8.74%     seed 4  −2.11%     seed 5   +0.20%
+```
+
+Mean +3.3%, spread 12.2 points, straddling zero. A quarter contains far too
+few independent trades for the result to mean anything.
+
+The full year does survive this check — every seed is negative on both return
+and per-trade expectancy (−12.8% to −32.9%, −0.021 R to −0.056 R) — which is
+why the negative conclusion above stands while any short-window number, good
+or bad, should be ignored.
+
+Use `--report-from` to score a tail window with the model already warmed up,
+rather than `--from`, which restarts it cold:
+
+```bash
+python3 tools/backtest.py --bars NAS100.s_M15.csv --report-from 2026-05-21
+```
+
 ### What this does not establish
 
 One year, one broker feed, one instrument, replayed on bars rather than ticks.
