@@ -56,8 +56,9 @@ input int             InpMlpHidden        = 24;           // MLP hidden units
 input double          InpHedgeEta         = 0.35;         // Expert re-weighting speed
 input int             InpReplaySteps      = 4;            // Replayed samples per new sample
 input int             InpReplayCapacity   = 4000;         // Replay buffer size
-input int             InpMinTrainSamples  = 400;          // Warm-up before the first trade
+input int             InpMinTrainSamples  = 60;           // Warm-up (SCORED samples, see stride)
 input int             InpEvalWindow       = 300;          // Rolling accuracy window
+input int             InpLabelStride      = 12;           // Score 1 in N samples (de-overlap)
 input int             InpRandomSeed       = 20240517;     // Seed for reproducible runs
 
 input group "=== Label (triple barrier) ==="
@@ -124,6 +125,7 @@ CDatasetWriter  g_dataset;
 ENUM_TIMEFRAMES g_tf;
 datetime        g_lastBarTime   = 0;
 long            g_barsSinceSave = 0;
+long            g_sampleIndex   = 0;
 
 double          g_initialRisk   = 0.0;   // price distance of the entry stop
 int             g_barsInTrade   = 0;
@@ -319,6 +321,14 @@ void ConsumeResolvedSamples(const datetime barTime)
       if(InpExportDataset)
          g_dataset.Write(barTime, rawSample, y, w);
 
+      //--- A sample opens every bar but takes InpLabelHorizon bars to
+      //--- resolve, so consecutive labels share almost all of their outcome.
+      //--- Scoring every one inflates the walk-forward accuracy that gates
+      //--- trading; stride keeps only roughly independent samples for it.
+      g_sampleIndex++;
+      bool scoreThis = (InpLabelStride <= 1) ||
+                       (g_sampleIndex % InpLabelStride == 0);
+
       //--- scaler statistics only ever see data that is already past
       g_scaler.Observe(rawSample);
 
@@ -327,7 +337,7 @@ void ConsumeResolvedSamples(const datetime barTime)
 
       if(InpOnlineLearning)
         {
-         g_ensemble.Learn(xs, y, w, true);
+         g_ensemble.Learn(xs, y, w, scoreThis);
          g_replay.Add(xs, y, w);
 
          //--- a few extra gradient steps over the recent past
@@ -344,7 +354,8 @@ void ConsumeResolvedSamples(const datetime barTime)
         {
          //--- frozen weights: still grade the prediction so the panel and
          //--- the accuracy gate keep reporting live out-of-sample numbers
-         g_ensemble.Evaluate(xs, y);
+         if(scoreThis)
+            g_ensemble.Evaluate(xs, y);
         }
      }
 

@@ -127,6 +127,7 @@ tools/
   backtest.py                  bar-replay backtest - faithful Python replica
   train_offline.py             optional numpy pre-trainer (same layouts)
   verify_checkpoint.py         validate a checkpoint before loading it
+  edge_test.py                 is there any signal? non-overlapping OOS test
 docs/
   INSTALL.md                   install, sessions, parameters, troubleshooting
   BACKTESTING.md               both backtest routes and how to read them
@@ -278,6 +279,30 @@ rather than `--from`, which restarts it cold:
 ```bash
 python3 tools/backtest.py --bars NAS100.s_M15.csv --report-from 2026-05-21
 ```
+
+### The features carry no measurable signal
+
+`tools/edge_test.py` settles the question the backtest cannot. It keeps only
+**non-overlapping** samples (one per label horizon), splits them
+chronologically 70/30, trains on the first part and scores the second:
+
+```
+horizon/barrier     n_indep  baseline  logit OOS   mlp OOS  best edge
+12b / 1.2ATR           1951    0.5171     0.5188    0.5051    +0.0017   (SE 0.0207)
+24b / 1.5ATR            975    0.5051     0.4437    0.5358    +0.0307   (SE 0.0292)
+24b / 2.5ATR            975    0.5461     0.4881    0.5119    -0.0341   (SE 0.0292)
+48b / 2.5ATR            487    0.5238     0.4558    0.5646    +0.0408   (SE 0.0412)
+48b / 3.5ATR            487    0.5170     0.4898    0.5034    -0.0136   (SE 0.0412)
+96b / 4.0ATR            243    0.5205     0.5205    0.5342    +0.0137   (SE 0.0585)
+```
+
+Every edge is inside one standard error of zero, and a third are negative.
+That is what no signal looks like. It also explains every result above: the
+0.63 walk-forward accuracy, the −32% year, the seed lottery over three months.
+There is nothing for the risk layer, the ensemble or the exits to convert.
+
+**Run this before tuning anything.** No parameter search on the backtest can
+manufacture an edge that is not in this table.
 
 ### What this does not establish
 

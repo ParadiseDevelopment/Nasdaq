@@ -246,12 +246,19 @@ class Scaler:
 # ======================================================================
 class Ensemble:
     def __init__(self, n, cfg, rng):
+        #--- A single random projection / weight init makes the whole result a
+        #--- seed lottery. Running several of each and letting Hedge weight
+        #--- them averages that variance away instead of gambling on one draw.
+        n_rff = getattr(cfg, "n_rff", 1)
+        n_mlp = getattr(cfg, "n_mlp", 1)
         self.lin = Logistic(n)
-        self.rff = Rff(n, cfg.rff_dim, cfg.rff_sigma, rng)
-        self.mlp = Mlp(n, cfg.mlp_hidden, rng)
-        self.experts = [self.lin, self.rff, self.mlp]
-        self.lrs = [cfg.lr, cfg.lr, cfg.lr * 0.6]
-        self.w = np.ones(3) / 3.0
+        self.rffs = [Rff(n, cfg.rff_dim, cfg.rff_sigma, rng) for _ in range(n_rff)]
+        self.mlps = [Mlp(n, cfg.mlp_hidden, rng) for _ in range(n_mlp)]
+        self.experts = [self.lin] + self.rffs + self.mlps
+        self.lrs = [cfg.lr] + [cfg.lr] * n_rff + [cfg.lr * 0.6] * n_mlp
+        k = len(self.experts)
+        self.floor = 0.5 / k
+        self.w = np.ones(k) / k
         self.eta = cfg.hedge_eta
         self.l2 = cfg.l2
         self.hits: list[float] = []
@@ -259,7 +266,7 @@ class Ensemble:
         self.labels: list[float] = []
         self.seen = 0
         self.eval_window = cfg.eval_window
-        self.last_p = np.full(3, 0.5)
+        self.last_p = np.full(len(self.experts), 0.5)
 
     def predict(self, x):
         self.last_p = np.array([m.predict(x[None, :])[0] for m in self.experts])
@@ -298,7 +305,7 @@ class Ensemble:
         if self.eta > 0:
             ll = np.array([log_loss(np.array([p]), np.array([y])) for p in ps])
             w = self.w * np.exp(-self.eta * ll)
-            w = np.maximum(w / w.sum(), 0.05)
+            w = np.maximum(w / w.sum(), self.floor)
             self.w = w / w.sum()
         self.seen += 1
 
@@ -402,6 +409,7 @@ class Backtest:
         self.loss_streak = 0
         self.cooldown = 0
         self.blocks: dict[str, int] = {}
+        self._sample_i = 0
 
     # ---------------------------------------------------------------
     def _block(self, reason):
@@ -523,10 +531,17 @@ class Backtest:
 
             #--- learn from whatever matured on this bar ---------------
             for x_raw, y, w in self.lab.update(bar["high"], bar["low"], bar["close"]):
+                #--- A sample opens every bar but takes label_horizon bars to
+                #--- resolve, so neighbours share almost all of their outcome.
+                #--- Scoring every one inflates accuracy; stride >1 keeps only
+                #--- roughly independent samples for the walk-forward metric.
+                self._sample_i += 1
+                score_this = (self._sample_i % max(1, cfg.label_stride) == 0)
                 self.scaler.observe(x_raw)
                 xs = self.scaler.transform(x_raw)
-                self.ens.evaluate(xs, y)
-                self.ens.train(xs, y, w)
+                if score_this:
+                    self.ens.evaluate(xs, y)
+                self.ens.train(xs, y, w * cfg.overlap_weight)
                 self.replay.add(xs, y, w)
                 for _ in range(cfg.replay_steps):
                     s = self.replay.sample()
@@ -553,8 +568,16 @@ class Backtest:
             if self.ens.disagreement() > cfg.max_disagreement:
                 self._block("expert disagreement"); continue
 
-            want_long = prob >= cfg.prob_threshold and cfg.allow_long
-            want_short = prob <= 1.0 - cfg.prob_threshold and cfg.allow_short
+            #--- the spread has to be paid out of the edge, so express the
+            #--- entry test in R: expected R at a 1:1 barrier is (2p-1), and
+            #--- it must clear cost plus a margin before the trade is worth it
+            spread_now = bar["spread"] * self.spec["point"]
+            cost_r = spread_now / (cfg.stop_atr * atr_v)
+            need = 0.5 + (cost_r + cfg.min_expected_r) / 2.0
+            thresh = max(cfg.prob_threshold, need) if cfg.cost_aware else cfg.prob_threshold
+
+            want_long = prob >= thresh and cfg.allow_long
+            want_short = prob <= 1.0 - thresh and cfg.allow_short
             if not (want_long or want_short):
                 self._block("no edge"); continue
 
@@ -693,7 +716,11 @@ def report(bt: Backtest, cfg, df):
           + ("   <-- no edge; the model has only learned the base rate"
              if acc - base <= 0.0 else ""))
     print(f"rolling log loss      : {bt.ens.rolling_logloss():.4f}")
-    print(f"final hedge weights   : lin {bt.ens.w[0]:.3f} | rff {bt.ens.w[1]:.3f} | mlp {bt.ens.w[2]:.3f}")
+    e = bt.ens
+    nr, nm = len(e.rffs), len(e.mlps)
+    print(f"experts               : 1 logistic + {nr} rff + {nm} mlp = {len(e.experts)}")
+    print(f"hedge mass            : lin {e.w[0]:.3f} | rff {e.w[1:1+nr].sum():.3f} "
+          f"| mlp {e.w[1+nr:].sum():.3f}")
     print()
 
     bh = (df["close"].iloc[-1] / df["close"].iloc[0] - 1.0) * 100.0
@@ -809,6 +836,16 @@ def main():
     p.add_argument("--min-train-samples", type=int, default=400)
     p.add_argument("--eval-window", type=int, default=300)
     p.add_argument("--seed", type=int, default=20240517)
+    p.add_argument("--n-rff", type=int, default=1, help="parallel RFF experts (different draws)")
+    p.add_argument("--n-mlp", type=int, default=1, help="parallel MLP experts (different inits)")
+    p.add_argument("--label-stride", type=int, default=1,
+                   help="score only every Nth matured sample, to de-overlap the metric")
+    p.add_argument("--overlap-weight", type=float, default=1.0,
+                   help="scale training weight to offset overlapping samples")
+    p.add_argument("--cost-aware", type=int, default=0,
+                   help="raise the entry threshold until expected R clears the spread")
+    p.add_argument("--min-expected-r", type=float, default=0.02,
+                   help="required expected R above cost when --cost-aware=1")
     p.add_argument("--label-horizon", type=int, default=12)
     p.add_argument("--barrier-atr", type=float, default=1.20)
     p.add_argument("--time-barrier-weight", type=float, default=0.50)
