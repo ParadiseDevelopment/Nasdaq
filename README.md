@@ -73,7 +73,8 @@ when the regime turns. The live weights are visible on the chart panel.
   each label takes `InpLabelHorizon` bars to resolve, consecutive samples
   overlap heavily and that accuracy overstates the edge a sequence of
   non-overlapping trades actually realises. On a year of real NAS100 M15 the
-  gap was 0.63 label accuracy versus a ~51% realised win rate.
+  gap was 0.63 label accuracy versus a ~48% realised win rate — see the
+  measured results below, which found no tradeable edge at all.
 * **Class-balanced replay.** A bounded replay buffer gives several effective
   epochs over a rolling window while half the draws target the minority class,
   so a long trend cannot bake in a permanent directional prior.
@@ -196,38 +197,55 @@ repository.
 
 Broker feed `NAS100.s`, M15, 23,684 bars, 2025-08-21 → 2026-08-21, replayed
 through `tools/backtest.py` with the terminal's own recorded spread
-(median 2.3 index points) and no commission:
+(median 2.3 index points) and no commission.
 
-| Configuration | Return | Trades | Win rate | PF |
+**On this evidence the strategy has no tradeable edge.** Not "it would work
+with a tighter spread" — the expectancy is negative at *zero* spread too.
+
+| Configuration | Return | Trades | Win rate | Avg trade |
 |---|---|---|---|---|
-| Shipped defaults | **−8.3%** | 189 | 42.9% | 0.86 |
-| Drawdown kill switch disabled | **−32.1%** | 1,498 | 44.4% | 0.91 |
-| Trade geometry matched to the label, no gates | −38.8% | 3,438 | 50.9% | 0.94 |
-| …the same run with spread forced to zero | **+55.2%** | 3,494 | 51.3% | 1.06 |
+| Shipped defaults | −8.3% | 189 | 42.9% | −0.084 R |
+| Drawdown kill switch disabled | −32.1% | 1,498 | 44.4% | −0.056 R |
+| Geometry matched to label, spread = real | −29.6% | 1,883 | 48.4% | −0.058 R |
+| **Geometry matched, spread = ZERO** | **−29.3%** | 1,883 | 48.4% | **−0.032 R** |
+| H1, 1.5 ATR barriers, real spread | −10.7% | 527 | 48.6% | −0.040 R |
+| H1, 1.5 ATR barriers, spread ≈ 0 | −8.3% | 527 | 48.6% | −0.031 R |
 
 Buy and hold over the same window: **+26.3%**.
 
-The −8.3% is not a full year of trading — the drawdown kill switch fired in
-October 2025 and the EA sat flat for the remaining ten months. That is the
-kill switch doing its job, not a strategy that lost slowly.
+Split the year in half and both halves lose at zero spread (−0.036 R then
+−0.022 R per trade), so this is not one bad regime.
 
-Three things this measurement establishes:
+### What the numbers mean
 
-1. **The spread is the whole story.** The identical configuration returns
-   +55.2% at zero spread and −38.8% at the real 2.3-point spread. At a
-   1.2 ATR stop on M15, one round trip costs ~5% of the money risked, and the
-   model's edge is not big enough to clear it. Anything that widens the
-   barriers, lengthens the horizon or moves to a higher timeframe attacks this
-   directly; tuning the model does not.
-2. **Label accuracy overstates tradeable edge.** The ensemble genuinely
-   separates the classes — 64.5% directional accuracy in the trade zone, well
-   calibrated (p > 0.62 → 69% realised) — yet non-overlapping trades win only
-   ~51%. A sample opens every bar and takes 12 bars to resolve, so consecutive
-   labels share almost all of their outcome. Treat `InpMinRollAccuracy` as a
-   degradation alarm, not as evidence of profitability.
-3. **The shipped exit geometry did not match the label.** Defaults predicted a
-   1.2 ATR move while risking 1.5 ATR to win 2.4 ATR. Aligning them did not
-   rescue the result, but the mismatch should not have been there.
+1. **Cost is real but not decisive.** At a 1.2 ATR stop on M15 the 2.3-point
+   spread costs ~5% of every R. Removing it entirely moves expectancy from
+   −0.058 R to −0.032 R — a large improvement that still leaves it negative.
+   Moving to H1, where the same spread is a much smaller fraction of the stop,
+   lands in the same place. Cost is not what is standing between this and
+   profitability.
+2. **The label accuracy is an artifact.** The ensemble reports 0.63 walk-forward
+   accuracy and 64.5% directional accuracy in the trade zone, and it is
+   genuinely well calibrated (p > 0.62 → 69% realised, monotone across every
+   bucket). But a sample opens on every bar and takes `InpLabelHorizon` bars
+   to resolve, so consecutive labels share nearly all of their outcome. The
+   effective independent sample count is roughly 1/12 of nominal, and the
+   accuracy that survives into a sequence of *non-overlapping* trades is
+   ~48–51% — a coin flip. This is the classic overlapping-labels trap, and
+   this EA walks straight into it.
+3. **Expectancy at zero cost hovers around −0.03 R and flips sign with
+   configuration.** One earlier parameter combination (gates off, 12-bar time
+   stop) produced +0.024 R at zero spread; turning the normal gates back on
+   returns it to −0.032 R. A sign that moves with unrelated settings is noise,
+   not signal.
+
+### What this does not establish
+
+One year, one broker feed, one instrument, replayed on bars rather than ticks.
+It does not prove the feature set is worthless everywhere — it does establish
+that these features, this label and this timeframe do not clear costs on this
+data, and that the EA's own accuracy readout cannot be trusted to tell you
+otherwise.
 
 Reproduce it:
 
