@@ -1,15 +1,62 @@
-# NAS100 Trading Bots
+# Trading Bots
 
-Two Expert Advisors for the NASDAQ 100 CFD, and the tooling that measured both.
+Expert Advisors, and the tooling that measured them.
 
-| Bot | Verdict on a year of real NAS100.s M15 |
+| Bot | Verdict |
 |---|---|
-| **[NAS100_Overnight](docs/OVERNIGHT.md)** — long overnight, flat by the cash open | **works, swap permitting**: +4.1% at 0.5% risk / night, 2.7% max drawdown, PF 1.21 |
+| **[NAS100_Overnight](docs/OVERNIGHT.md)** — long overnight, flat by the cash open | **works, swap permitting**: +4.1% at 0.5% risk / night, 2.7% max drawdown, PF 1.21 on a year of real NAS100.s M15 |
 | **NAS100_ML_Bot** — online-learning ensemble (below) | **does not work**: −32% over the year; its features carry no measurable signal |
+| **[XAUUSD_Scalper](docs/XAUUSD_SCALPER.md)** — gold, spot on weekdays and the 24/7 book at weekends | **unmeasured**: no XAUUSD feed has been replayed through it. Built to be tested; `tools/backtest_scalper.py` is how you test it |
 
 Read `docs/OVERNIGHT.md` first. The ML bot is documented below and kept because
 the research tooling around it — `tools/edge_test.py` in particular — is what
 established that it does not work, and what found the strategy that does.
+
+---
+
+# XAUUSD Scalper
+
+Gold scalper that follows the market across the weekend: **XAUUSD.s** Monday to
+Friday, **XAUUSD24/7.s** while spot is shut, flat across every handover. The
+weekend is detected from the broker's own session table, so DST and holidays
+need no re-tuning — and the nightly maintenance break is deliberately not
+mistaken for one.
+
+Two mechanisms — a Donchian breakout continuation and a Bollinger fade — both
+ATR-normalised, both gated by a spread cap expressed as *a fraction of the stop
+distance*, because that is what decides whether gold scalping clears its costs:
+
+| Timeframe | typical ATR | spread 20 pts | spread 30 pts | spread 60 pts |
+|---|---|---|---|---|
+| M5  | ~$2.20 | 0.091 R | 0.136 R | 0.272 R |
+| M15 | ~$3.80 | 0.052 R | 0.079 R | 0.157 R |
+
+On M5 at 30 points you start every trade 0.14 R behind. That is the number to
+beat before anything else matters.
+
+**It has not been shown to be profitable.** No gold feed has been run through
+it — that is your data to supply:
+
+```bash
+python3 tools/backtest_scalper.py --bars XAUUSD.s_M5.csv \
+                                  --weekend-bars XAUUSD24-7.s_M5.csv --commission 7.0
+python3 tools/backtest_scalper.py --demo     # no data? see what no edge looks like
+```
+
+The report's headline is the edge over a **random-direction control** — the same
+entries, sizes, exits and spread, with only the direction call replaced by a coin
+flip, so everything the strategy does not claim cancels out:
+
+```
+EDGE over the control : +0.0412 R   (SE 0.0290)   t = 1.42
+```
+
+The EA holds one position at a time, so these trades do not overlap and that t
+statistic is honest — unlike the walk-forward accuracy that flattered the ML bot
+below. Require t ≥ 2, both halves positive and every fold positive before
+trading it. Full detail, including two measurements that set the defaults
+(break-even and trailing stops cost ~0.05 R per trade on a driftless series, so
+both ship disabled), is in **[docs/XAUUSD_SCALPER.md](docs/XAUUSD_SCALPER.md)**.
 
 ---
 
@@ -126,6 +173,11 @@ MQL5/
   Experts/
     NAS100_Overnight.mq5       the working bot - clock-driven, no ML
     NAS100_ML_Bot.mq5          the ML EA - inputs, per-bar pipeline, panel
+    XAUUSD_Scalper.mq5         gold scalper, spot + the 24/7 weekend book
+  Include/XAUScalp/
+    SymbolRouter.mqh           which gold symbol is live, and for how long
+    SignalEngine.mqh           breakout and fade, from closed bars only
+    ScalpRisk.mqh              sizing and every pre-trade gate
   Include/NAS100ML/
     Utils.mqh                  math helpers, AdamW, ring statistics
     FeatureEngine.mqh          40 ATR-normalised features from closed bars
@@ -140,12 +192,14 @@ MQL5/
   Scripts/
     ExportBars.mq5             dump chart bars to CSV for the replica
 tools/
+  backtest_scalper.py          backtest for the gold scalper (no dependencies)
   backtest_overnight.py        backtest for the overnight bot
   backtest.py                  bar-replay backtest - faithful ML replica
   train_offline.py             optional numpy pre-trainer (same layouts)
   verify_checkpoint.py         validate a checkpoint before loading it
   edge_test.py                 is there any signal? non-overlapping OOS test
 docs/
+  XAUUSD_SCALPER.md            the gold scalper: weekend switch, costs, measuring
   OVERNIGHT.md                 the working bot: evidence, swap, limits
   INSTALL.md                   install, sessions, parameters, troubleshooting
   BACKTESTING.md               both backtest routes and how to read them
